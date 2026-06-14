@@ -122,6 +122,7 @@ function render() {
         ${navBtn("accounts", "▣", "Accounts")}
         ${navBtn("transactions", "⇄", "Transactions")}
         ${navBtn("expenses", "↓", "Expenses")}
+        ${navBtn("reports", "▦", "Reports")}
         ${navBtn("loans", "↹", "Loans & debts")}
         ${navBtn("incomes", "✎", "Project income")}
         ${navBtn("trusts", "◈", "Unit trusts")}
@@ -339,9 +340,17 @@ const views = {
       loans: (t) => ["lend", "loan_repaid", "borrow", "debt_repaid"].includes(t.type),
       income: (t) => t.type === "income",
     };
-    const list = state.transactions.filter(groups[filter] || groups.all).slice().sort(byDateDesc);
+    const dateRange = state.txnRange || "all";
+    const period = reportPeriod(dateRange);
+    const list = state.transactions
+      .filter(groups[filter] || groups.all)
+      .filter((t) => C.inPeriod(t.date, period.from, period.to))
+      .slice()
+      .sort(byDateDesc);
     const chip = (key, label) =>
       `<button class="fchip ${filter === key ? "active" : ""}" data-txn-filter="${key}">${label}</button>`;
+    const dchip = (key, label) =>
+      `<button class="fchip ${dateRange === key ? "active" : ""}" data-txn-range="${key}">${label}</button>`;
     return `
       <div class="view-head">
         <div><h2>Transactions</h2><p>Every move of money, newest first.</p></div>
@@ -353,6 +362,9 @@ const views = {
       </div>
       <div class="filters">
         ${chip("all", "All")}${chip("expenses", "Expenses")}${chip("transfers", "Transfers")}${chip("loans", "Loans &amp; debts")}${chip("income", "Income")}
+      </div>
+      <div class="filters">
+        ${dchip("all", "All time")}${dchip("1M", "1M")}${dchip("3M", "3M")}${dchip("6M", "6M")}${dchip("12M", "12M")}
       </div>
       ${txnLedger(list, false)}
     `;
@@ -387,6 +399,49 @@ const views = {
       }
       <div class="section"><div class="section-head"><h3>All expenses</h3></div>
         ${txnLedger(list, false)}
+      </div>
+    `;
+  },
+
+  reports() {
+    const range = state.reportRange || "3M";
+    const period = reportPeriod(range);
+    const fromYM = period.from ? C.monthOf(period.from) : C.monthOf(earliestDate(state.transactions) || today());
+    const months = C.monthsBetween(fromYM, C.monthOf(period.to));
+    const cf = C.cashFlow(state.transactions, period);
+    const ie = C.incomeVsExpenseByMonth(state.transactions, months);
+    const trend = C.assetsTrend(state.accounts, state.transactions, months);
+    const byCat = C.expenseByCategory(state.transactions, period);
+    const cats = Object.keys(byCat).sort((a, b) => byCat[b] - byCat[a]);
+    const maxCat = cats.length ? byCat[cats[0]] : 0;
+    const label = rangeLabel(range);
+    const RANGES = [["1M", "1M"], ["3M", "3M"], ["6M", "6M"], ["12M", "12M"], ["all", "All"]];
+    const rchip = (k, l) => `<button class="fchip ${range === k ? "active" : ""}" data-report-range="${k}">${l}</button>`;
+    return `
+      <div class="view-head"><div><h2>Reports</h2><p>Trends and breakdowns across a period.</p></div></div>
+      <div class="filters">${RANGES.map(([k, l]) => rchip(k, l)).join("")}</div>
+      <div class="metrics" style="margin-bottom:20px">
+        <div class="metric"><div class="label">Income</div><div class="val pos">${fmt(cf.inflow)}</div><div class="sub">${label}</div></div>
+        <div class="metric"><div class="label">Expenses</div><div class="val neg">${fmt(cf.outflow)}</div><div class="sub">${label}</div></div>
+        <div class="metric feature"><div class="label">Net</div><div class="val">${signed(cf.net)}</div><div class="sub">income − spending · ${label}</div></div>
+      </div>
+      <div class="section">
+        <div class="section-head"><h3>Income vs expenses</h3><span class="muted">per month</span></div>
+        <div class="chart-card">${barChartGrouped(ie)}</div>
+      </div>
+      <div class="section">
+        <div class="section-head"><h3>Net assets over time</h3><span class="muted">month-end</span></div>
+        <div class="chart-card">${lineChart(trend)}</div>
+      </div>
+      <div class="section">
+        <div class="section-head"><h3>Spending by category</h3><span class="muted">${label}</span></div>
+        ${
+          cats.length
+            ? `<div class="catbars">${cats
+                .map((c) => `<div class="catbar"><div class="catbar-top"><span>${esc(c)}</span><span class="amt">${fmt(byCat[c])}</span></div><div class="bar"><span style="width:${maxCat > 0 ? (byCat[c] / maxCat) * 100 : 0}%"></span></div></div>`)
+                .join("")}</div>`
+            : emptyState("No spending in this period", "Expenses you log will break down here.")
+        }
       </div>
     `;
   },
@@ -600,6 +655,79 @@ const lockScreen = () => `
       <button class="btn" data-unlock>Unlock</button>
     </div>
   </div>`;
+
+/* ---- Reports: period helpers + hand-rolled SVG charts ---- */
+// Range key -> {from,to} ISO. Date math lives here (compute.js stays date-pure).
+// Ranges mean whole calendar months ending with the current one, so KPIs and the month
+// bars agree ("3M" → exactly 3 month buckets). `from` snaps to the 1st of the earliest month.
+const reportPeriod = (key, ref = today()) => {
+  if (key === "all") return { from: null, to: ref };
+  const n = { "1M": 1, "3M": 3, "6M": 6, "12M": 12 }[key] || 3;
+  const d = new Date(ref + "T00:00:00Z"); // UTC, so toISOString() doesn't shift a day in +TZ zones
+  d.setUTCMonth(d.getUTCMonth() - (n - 1), 1);
+  return { from: d.toISOString().slice(0, 10), to: ref };
+};
+const earliestDate = (txns) =>
+  (txns || []).reduce((m, t) => (t.date && (!m || t.date < m) ? t.date : m), "");
+const rangeLabel = (key) =>
+  key === "all" ? "all time" : `last ${key.replace("M", " month")}${key === "1M" ? "" : "s"}`;
+
+const emptyChart = (w, h, msg) =>
+  `<svg class="chart" viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(msg)}" preserveAspectRatio="xMidYMid meet">
+     <title>${esc(msg)}</title>
+     <text x="${w / 2}" y="${h / 2}" text-anchor="middle" font-size="13" fill="var(--ink-soft)">${esc(msg)}</text>
+   </svg>`;
+
+// Grouped bars: income (green) vs expense (red) per month. data: [{month,income,expense}].
+function barChartGrouped(data, { w = 680, h = 220 } = {}) {
+  if (!data.length || data.every((d) => !d.income && !d.expense))
+    return emptyChart(w, h, "No income or spending in this period");
+  const padL = 8, padR = 8, padT = 14, padB = 26;
+  const plotH = h - padT - padB, plotW = w - padL - padR, baseY = padT + plotH;
+  const max = Math.max(1, ...data.map((d) => Math.max(d.income, d.expense)));
+  const groupW = plotW / data.length;
+  const barW = Math.max(4, Math.min(18, groupW * 0.3));
+  const y = (v) => padT + plotH * (1 - v / max);
+  const bars = data
+    .map((d, i) => {
+      const cx = padL + groupW * i + groupW / 2;
+      const ix = cx - barW - 1.5, ex = cx + 1.5;
+      return `
+      <rect x="${ix.toFixed(1)}" y="${y(d.income).toFixed(1)}" width="${barW.toFixed(1)}" height="${(baseY - y(d.income)).toFixed(1)}" rx="2" fill="var(--green)"><title>${d.month} · income ${fmt(d.income)}</title></rect>
+      <rect x="${ex.toFixed(1)}" y="${y(d.expense).toFixed(1)}" width="${barW.toFixed(1)}" height="${(baseY - y(d.expense)).toFixed(1)}" rx="2" fill="var(--red)"><title>${d.month} · expense ${fmt(d.expense)}</title></rect>
+      <text class="chart-num" x="${cx.toFixed(1)}" y="${h - 9}" text-anchor="middle" font-size="9" fill="var(--ink-soft)">${d.month.slice(5)}</text>`;
+    })
+    .join("");
+  return `
+    <svg class="chart" viewBox="0 0 ${w} ${h}" role="img" aria-label="Income versus expense by month" preserveAspectRatio="xMidYMid meet">
+      <title>Income vs expense by month</title>
+      <line x1="${padL}" y1="${baseY}" x2="${w - padR}" y2="${baseY}" stroke="var(--line)" stroke-width="1"/>
+      ${bars}
+    </svg>
+    <div class="chart-legend"><span><i style="background:var(--green)"></i>Income</span><span><i style="background:var(--red)"></i>Expense</span></div>`;
+}
+
+// Area/line: net liquid assets at each month-end. data: [{month,assets}].
+function lineChart(data, { w = 680, h = 200 } = {}) {
+  if (!data.length) return emptyChart(w, h, "No data in this period");
+  const padL = 8, padR = 8, padT = 14, padB = 26;
+  const plotH = h - padT - padB, plotW = w - padL - padR, baseY = padT + plotH;
+  const vals = data.map((d) => d.assets);
+  const max = Math.max(1, ...vals), min = Math.min(0, ...vals), span = max - min || 1;
+  const x = (i) => (data.length === 1 ? padL + plotW / 2 : padL + (plotW * i) / (data.length - 1));
+  const y = (v) => padT + plotH * (1 - (v - min) / span);
+  const pts = data.map((d, i) => `${x(i).toFixed(1)},${y(d.assets).toFixed(1)}`);
+  const area = `M ${x(0).toFixed(1)},${baseY.toFixed(1)} L ${pts.join(" L ")} L ${x(data.length - 1).toFixed(1)},${baseY.toFixed(1)} Z`;
+  const dots = data.map((d, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(d.assets).toFixed(1)}" r="2.5" fill="var(--gold)"><title>${d.month} · ${fmt(d.assets)}</title></circle>`).join("");
+  const labels = data.map((d, i) => `<text class="chart-num" x="${x(i).toFixed(1)}" y="${h - 9}" text-anchor="middle" font-size="9" fill="var(--ink-soft)">${d.month.slice(5)}</text>`).join("");
+  return `
+    <svg class="chart" viewBox="0 0 ${w} ${h}" role="img" aria-label="Net assets over time" preserveAspectRatio="xMidYMid meet">
+      <title>Net assets over time</title>
+      <path d="${area}" fill="var(--green-soft)" opacity="0.5"/>
+      <polyline points="${pts.join(" ")}" fill="none" stroke="var(--gold)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+      ${dots}${labels}
+    </svg>`;
+}
 
 /* ---- Ledger helpers (presentation) ---- */
 const byDateDesc = (a, b) => (b.date || "").localeCompare(a.date || "");
@@ -842,6 +970,8 @@ function wire() {
 
   bind("[data-add]", (b) => addFlows[b.dataset.add]());
   bind("[data-txn-filter]", (b) => { state.txnFilter = b.dataset.txnFilter; render(); });
+  bind("[data-report-range]", (b) => { state.reportRange = b.dataset.reportRange; render(); });
+  bind("[data-txn-range]", (b) => { state.txnRange = b.dataset.txnRange; render(); });
 
   // Settings
   bind("[data-set-theme]", (b) => setTheme(b.dataset.setTheme));

@@ -38,7 +38,7 @@ export const assetTotal = (accounts, txns) => accountsTotal(accounts, txns); // 
 
 // ---- Expenses ----
 export const isExpense = (t) => t.type === "expense";
-const inPeriod = (d, from, to) => (!from || (d || "") >= from) && (!to || (d || "") <= to);
+export const inPeriod = (d, from, to) => (!from || (d || "") >= from) && (!to || (d || "") <= to);
 export const monthOf = (d) => (d || "").slice(0, 7); // "YYYY-MM"
 export const expenseTotal = (txns, { from, to } = {}) =>
   sum((txns || []).filter((t) => isExpense(t) && inPeriod(t.date, from, to)), (t) => num(t.amount));
@@ -50,6 +50,49 @@ export const expenseByCategory = (txns, { from, to } = {}) =>
       m[k] = (m[k] || 0) + num(t.amount);
       return m;
     }, {});
+
+// ---- Reports / trends ----
+// Inclusive list of "YYYY-MM" buckets from fromYM..toYM (ISO strings compare lexically).
+export const monthsBetween = (fromYM, toYM) => {
+  if (!fromYM) return [];
+  if (!toYM || fromYM > toYM) return [fromYM];
+  const out = [];
+  let [y, m] = fromYM.split("-").map(Number);
+  const [ty, tm] = toYM.split("-").map(Number);
+  while (y < ty || (y === ty && m <= tm)) {
+    out.push(`${y}-${String(m).padStart(2, "0")}`);
+    if (++m > 12) { m = 1; y++; }
+  }
+  return out;
+};
+// Bucket a txn filter by month, zero-filled, in `months` order: [{month,total}].
+export const monthlyTotals = (txns, predicate, months) => {
+  const acc = {};
+  (txns || []).filter(predicate).forEach((t) => {
+    const k = monthOf(t.date);
+    acc[k] = (acc[k] || 0) + num(t.amount);
+  });
+  return (months || []).map((month) => ({ month, total: acc[month] || 0 }));
+};
+// Income vs expense per month, aligned + zero-filled, ready for grouped bars.
+export const incomeVsExpenseByMonth = (txns, months) => {
+  const inc = monthlyTotals(txns, (t) => t.type === "income", months);
+  const exp = monthlyTotals(txns, (t) => t.type === "expense", months);
+  return (months || []).map((m, i) => ({ month: m, income: inc[i].total, expense: exp[i].total }));
+};
+// Net liquid assets (bank + cash) counting only ledger entries dated <= dateMax ("YYYY-MM-DD").
+export const assetsAsOf = (accounts, txns, dateMax) =>
+  assetTotal(accounts, (txns || []).filter((t) => inPeriod(t.date, null, dateMax)));
+// Month-end net-asset trend (wealth over time): [{month,assets}]. "-31" ceiling is safe (lexical ISO).
+export const assetsTrend = (accounts, txns, months) =>
+  (months || []).map((m) => ({ month: m, assets: assetsAsOf(accounts, txns, m + "-31") }));
+// Clean P&L cash flow for the period. inflow=income, outflow=expense; lend/borrow/invest/transfer
+// are excluded — they move money you still own or owe, not money earned or spent.
+export const cashFlow = (txns, { from, to } = {}) => {
+  const inflow = sum((txns || []).filter((t) => t.type === "income" && inPeriod(t.date, from, to)), (t) => num(t.amount));
+  const outflow = sum((txns || []).filter((t) => t.type === "expense" && inPeriod(t.date, from, to)), (t) => num(t.amount));
+  return { inflow, outflow, net: inflow - outflow };
+};
 
 // ---- Trusts (aggregates unchanged) ----
 export const trustTotal = (trusts) => sum(trusts, (t) => trustValue(t));

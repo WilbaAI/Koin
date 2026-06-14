@@ -290,3 +290,54 @@ describe("migrateCategories", () => {
     expect(C.migrateCategories(["Food", "Custom"])).toEqual(["Food", "Custom"]);
   });
 });
+
+describe("reports / trends", () => {
+  const accounts = [
+    { id: "boc", type: "bank", opening: 1000 },
+    { id: "cash", type: "cash", opening: 0 },
+  ];
+  const txns = [
+    { date: "2026-01-15", type: "income", amount: 500, from: "ext:income", to: "boc" },
+    { date: "2026-01-20", type: "expense", amount: 200, from: "boc", to: "ext:expense" },
+    { date: "2026-02-10", type: "income", amount: 300, from: "ext:income", to: "boc" },
+    { date: "2026-02-15", type: "lend", amount: 400, from: "boc", to: "ext:loan", link: { kind: "loan", id: "l1" } },
+    { date: "2026-02-20", type: "transfer", amount: 100, from: "boc", to: "cash" },
+    { date: "2026-03-05", type: "expense", amount: 100, from: "cash", to: "ext:expense" },
+  ];
+  const months = C.monthsBetween("2026-01", "2026-03");
+
+  it("monthsBetween: span, year boundary, single, inverted, empty", () => {
+    expect(C.monthsBetween("2026-01", "2026-03")).toEqual(["2026-01", "2026-02", "2026-03"]);
+    expect(C.monthsBetween("2025-11", "2026-02")).toEqual(["2025-11", "2025-12", "2026-01", "2026-02"]);
+    expect(C.monthsBetween("2026-05", "2026-05")).toEqual(["2026-05"]);
+    expect(C.monthsBetween("2026-05", "2026-01")).toEqual(["2026-05"]); // inverted → graceful
+    expect(C.monthsBetween(null, "2026-01")).toEqual([]);
+  });
+  it("monthlyTotals zero-fills, respects predicate + order", () => {
+    expect(C.monthlyTotals(txns, (t) => t.type === "income", months)).toEqual([
+      { month: "2026-01", total: 500 }, { month: "2026-02", total: 300 }, { month: "2026-03", total: 0 },
+    ]);
+  });
+  it("incomeVsExpenseByMonth aligns the two series", () => {
+    expect(C.incomeVsExpenseByMonth(txns, months)).toEqual([
+      { month: "2026-01", income: 500, expense: 200 },
+      { month: "2026-02", income: 300, expense: 0 },
+      { month: "2026-03", income: 0, expense: 100 },
+    ]);
+  });
+  it("assetsAsOf applies a date ceiling", () => {
+    expect(C.assetsAsOf(accounts, txns, "2026-01-31")).toBe(1300);
+    expect(C.assetsAsOf(accounts, txns, "2026-12-31")).toBe(C.assetTotal(accounts, txns));
+  });
+  it("assetsTrend = running month-end net assets (final == live total)", () => {
+    expect(C.assetsTrend(accounts, txns, months)).toEqual([
+      { month: "2026-01", assets: 1300 },
+      { month: "2026-02", assets: 1200 },
+      { month: "2026-03", assets: 1100 },
+    ]);
+  });
+  it("cashFlow = income − expense, excludes lend/transfer, respects period", () => {
+    expect(C.cashFlow(txns)).toEqual({ inflow: 800, outflow: 300, net: 500 });
+    expect(C.cashFlow(txns, { from: "2026-02-01", to: "2026-02-28" })).toEqual({ inflow: 300, outflow: 0, net: 300 });
+  });
+});
