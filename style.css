@@ -466,3 +466,8 @@ input, select { font-family: inherit; font-size: 14px; }
 .lock-card h1 .dot { color: var(--accent-bg); }
 .lock-card p { color: var(--ink-soft); font-size: 14px; }
 .lock-card .btn { margin-top: 6px; padding: 11px 28px; }
+
+/* inline summary + link in a section header (e.g. Overview "Open invoices") */
+.section-head .muted { font-size: 12px; color: var(--ink-soft); font-family: var(--mono); }
+.link { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.link:hover { opacity: 0.7; }

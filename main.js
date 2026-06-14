@@ -158,8 +158,9 @@ const views = {
     const ym = C.monthOf(today());
     const monthExp = expenseTotal({ from: ym + "-01", to: ym + "-31" });
     const recent = state.transactions.slice().sort(byDateDesc).slice(0, 6);
-    const g = trustTotal() - trustInvestedTotal();
-    const gp = trustInvestedTotal() > 0 ? (g / trustInvestedTotal()) * 100 : 0;
+    const pending = incomePending();
+    const received = incomeReceived();
+    const openInvoices = state.incomes.filter((i) => num(i.total) - incomeReceivedOne(i) > 0.005);
     return `
       <div class="view-head">
         <div><h2>Overview</h2><p>Where your money stands today.</p></div>
@@ -185,7 +186,7 @@ const views = {
         <div class="metric"><div class="label">Cash on hand</div><div class="val ${cashTotal() < 0 ? "neg" : ""}">${fmt(cashTotal())}</div><div class="sub">Physical cash</div></div>
         <div class="metric"><div class="label">Bank balances</div><div class="val ${bankTotal() < 0 ? "neg" : "pos"}">${fmt(bankTotal())}</div><div class="sub">${state.accounts.filter(a => a.type === "bank" && !a.archived).length} account(s)</div></div>
         <div class="metric"><div class="label">Spent this month</div><div class="val ${monthExp > 0 ? "neg" : ""}">${fmt(monthExp)}</div><div class="sub">${monthName(ym)}</div></div>
-        <div class="metric"><div class="label">Unit trusts</div><div class="val pos">${fmt(trustTotal())}</div><div class="sub">${g >= 0 ? "+" : ""}${fmt(g).replace("Rs ", "Rs ")} (${gp >= 0 ? "+" : ""}${gp.toFixed(1)}%)</div></div>
+        <div class="metric"><div class="label">Income pending</div><div class="val">${fmt(pending)}</div><div class="sub">${openInvoices.length} open invoice(s)</div></div>
       </div>
 
       <div class="section">
@@ -196,6 +197,14 @@ const views = {
       <div class="section">
         <div class="section-head"><h3>Open loans &amp; debts</h3></div>
         ${loanLedger(state.loans.filter((l) => loanOutstandingOne(l) > 0.005).slice(0, 5), true)}
+      </div>
+
+      <div class="section">
+        <div class="section-head">
+          <h3>Open invoices</h3>
+          ${state.incomes.length ? `<span class="muted">received ${fmt(received)} · pending ${fmt(pending)} · <a data-nav="incomes" class="link">view all</a></span>` : ""}
+        </div>
+        ${incomeLedger(openInvoices.slice(0, 5), true)}
       </div>
     `;
   },
@@ -540,6 +549,40 @@ function loanLedger(loans, compact) {
             <button data-edit-loan="${l.id}">Edit</button>
             <button class="del" data-del-loan="${l.id}">Delete</button>
           </div>
+        </div>`;
+      })
+      .join("")}
+  </div>`;
+}
+
+function incomeLedger(incomes, compact) {
+  if (!incomes.length)
+    return emptyState(
+      compact ? "No open invoices" : "No income recorded",
+      compact ? "Fully-received projects don't show here." : "Add a project to track what you've billed and received."
+    );
+  const cols = "grid-template-columns: 1.8fr 1.4fr 1fr 1fr 120px";
+  return `<div class="ledger">
+    <div class="row head" style="${cols}">
+      <div>Project</div><div>Progress</div><div style="text-align:right">Total</div><div style="text-align:right">Outstanding</div><div></div>
+    </div>
+    ${incomes
+      .map((i) => {
+        const t = num(i.total), r = incomeReceivedOne(i);
+        const out = Math.max(0, t - r);
+        const pct = t > 0 ? Math.min(100, (r / t) * 100) : 0;
+        const status = out < 0.005 ? "paid" : r > 0 ? "partial" : "open";
+        const label = out < 0.005 ? "paid in full" : r > 0 ? "part paid" : "unpaid";
+        return `
+        <div class="row" style="${cols}">
+          <div>
+            <div class="name">${esc(i.project) || "Untitled"}</div>
+            <div class="meta">${esc(i.source) || "—"}${i.date ? " · " + i.date : ""}</div>
+          </div>
+          <div><span class="tag ${status}">${label}</span><div class="bar"><span style="width:${pct}%"></span></div></div>
+          <div class="amt">${fmt(t)}</div>
+          <div class="amt ${out > 0.005 ? "neg" : "pos"}">${fmt(out)}</div>
+          <div class="actions">${compact ? "" : `<button data-pay-income="${i.id}">Payment</button>`}</div>
         </div>`;
       })
       .join("")}
