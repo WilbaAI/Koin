@@ -228,7 +228,14 @@ npm run tauri build    # build native installer
 
 - Editing a transaction only corrects amount/date/note (+category for expenses); to change an
   endpoint you delete and re-add. Full endpoint editing is deliberately out of scope.
-- No recurring transactions, no charts/history graphs, no multi-currency, no export.
+- No recurring transactions, no multi-currency, no export.
+- **Reports** tab has period chips (1M/3M/6M/All, snapped to whole calendar months via `reportPeriod`
+  in main.js — do UTC month math, `Date(...+"T00:00:00Z")`/`setUTCMonth`, or `toISOString()` shifts a
+  day in +TZ zones like Sri Lanka), KPIs, and **hand-rolled inline SVG charts** (no chart library):
+  `barChartGrouped`/`lineChart` in main.js, fed by pure compute aggregations (`monthsBetween`,
+  `monthlyTotals`, `incomeVsExpenseByMonth`, `assetsAsOf`, `assetsTrend`, `cashFlow`). SVG fills use CSS
+  vars so dark mode themes. `state.reportRange`/`state.txnRange` are transient (like `txnFilter` — not
+  in `blank()`/Rust `State`). The Transactions tab has a date-range filter row reusing `reportPeriod`.
 - Redemption uses average-cost basis (no FIFO/lot selection, no realized-gain reporting).
 - App lock is launch-only (no idle/re-focus re-lock) and macOS-only (Touch ID / password).
 - The app icon is generated from [src-tauri/app-icon.svg](src-tauri/app-icon.svg) via `tauri icon`
