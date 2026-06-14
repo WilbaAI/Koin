@@ -14,6 +14,13 @@ tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+# Embedded SQLite. `bundled` compiles SQLite from source (no system libsqlite3-dev needed).
+rusqlite = { version = "0.37", features = ["bundled"] }
+
+# Touch ID / password app-lock is macOS-only, so the dep is target-scoped — Linux/Windows
+# builds never pull it (the `authenticate` command is a no-op stub there).
+[target.'cfg(target_os = "macos")'.dependencies]
+robius-authentication = "0.1"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

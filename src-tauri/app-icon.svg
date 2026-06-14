@@ -1,0 +1,53 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3a322c"/>
+      <stop offset="1" stop-color="#201b17"/>
+    </linearGradient>
+    <radialGradient id="coin" cx="0.42" cy="0.36" r="0.78">
+      <stop offset="0" stop-color="#f8e1a6"/>
+      <stop offset="0.55" stop-color="#e2b863"/>
+      <stop offset="1" stop-color="#bd8f3c"/>
+    </radialGradient>
+    <linearGradient id="rim" x1="0" y1="182" x2="0" y2="842" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f3d488"/>
+      <stop offset="1" stop-color="#9c7430"/>
+    </linearGradient>
+    <rect id="tk" x="505" y="168" width="14" height="30" rx="6" fill="#94702e"/>
+  </defs>
+
+  <!-- background squircle -->
+  <rect x="0" y="0" width="1024" height="1024" rx="232" fill="url(#bg)"/>
+
+  <!-- milled edge ticks (behind the coin face, peeking at the rim) -->
+  <g opacity="0.6">
+    <use href="#tk"/>
+    <use href="#tk" transform="rotate(22.5 512 512)"/>
+    <use href="#tk" transform="rotate(45 512 512)"/>
+    <use href="#tk" transform="rotate(67.5 512 512)"/>
+    <use href="#tk" transform="rotate(90 512 512)"/>
+    <use href="#tk" transform="rotate(112.5 512 512)"/>
+    <use href="#tk" transform="rotate(135 512 512)"/>
+    <use href="#tk" transform="rotate(157.5 512 512)"/>
+    <use href="#tk" transform="rotate(180 512 512)"/>
+    <use href="#tk" transform="rotate(202.5 512 512)"/>
+    <use href="#tk" transform="rotate(225 512 512)"/>
+    <use href="#tk" transform="rotate(247.5 512 512)"/>
+    <use href="#tk" transform="rotate(270 512 512)"/>
+    <use href="#tk" transform="rotate(292.5 512 512)"/>
+    <use href="#tk" transform="rotate(315 512 512)"/>
+    <use href="#tk" transform="rotate(337.5 512 512)"/>
+  </g>
+
+  <!-- coin face -->
+  <circle cx="512" cy="512" r="322" fill="url(#rim)"/>
+  <circle cx="512" cy="512" r="306" fill="url(#coin)"/>
+  <circle cx="512" cy="512" r="262" fill="none" stroke="#9a7531" stroke-width="9" opacity="0.4"/>
+
+  <!-- K monogram (cut from the coin) -->
+  <g fill="#241f1b">
+    <rect x="412" y="372" width="66" height="280" rx="6"/>
+    <polygon points="478,512 600,372 664,372 542,512"/>
+    <polygon points="542,512 664,652 600,652 478,512"/>
+  </g>
+</svg>

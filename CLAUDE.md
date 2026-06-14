@@ -7,7 +7,8 @@ them or accidentally undo them.
 ## What Koin is
 
 A local-first **Tauri 2** desktop app for tracking personal finances in **LKR (Sri Lankan rupees)**.
-No cloud, no accounts, no network calls. All data lives in one JSON file on the user's machine.
+No cloud, no accounts, no network calls. All data lives in one embedded **SQLite** database
+(`koin.db`) on the user's machine.
 The user is a single individual tracking their own money.
 
 Everything is connected through **one transaction ledger** — every move of money has a source
@@ -47,9 +48,10 @@ tests/
   compute.test.js    # math + migration coverage (incl. idempotency)
   dom/modal.test.js  # modal save/cancel/validation behavior + regression tests
 src-tauri/
-  src/main.rs        # 3 Tauri commands: load_data, save_data, data_file_location
+  src/main.rs        # SQLite persistence (rusqlite): schema, state↔tables mapping, legacy import,
+                     #   3 commands (load_data/save_data/data_file_location) + #[cfg(test)] round-trip tests
   tauri.conf.json    # window config, bundle, icons
-  Cargo.toml         # Rust deps (tauri, plugin-fs, plugin-dialog) pinned to "2"
+  Cargo.toml         # Rust deps (tauri, plugin-fs, plugin-dialog) pinned to "2"; rusqlite (bundled)
   capabilities/default.json  # permissions
 .github/workflows/ci.yml     # CI: test+build frontend, then Tauri build on 3 OSes
 ```
@@ -98,11 +100,39 @@ adjust (ext:opening↔acct). `link` joins a cash move to its terms entity (loan/
 trust legs also carry `invId`).
 
 ### Persistence
-`readData`/`writeData` in main.js. When running inside Tauri (`window.__TAURI_INTERNALS__`
-present), they call the Rust `load_data`/`save_data` commands → JSON file in the OS app-data
-dir. In a plain browser (`npm run dev` without Tauri) they fall back to `localStorage`, so
-the UI can be previewed without Rust. **Preserve this dual path** — it's how tests and quick
-previews work.
+`readData`/`writeData` in main.js still pass the **whole `state` as a JSON string** over the same
+three Rust commands (`load_data`/`save_data`/`data_file_location`). On disk that JSON is now an
+embedded **SQLite** database (`koin.db` in the OS app-data dir), via **rusqlite** in
+[src-tauri/src/main.rs](src-tauri/src/main.rs). `save_data` parses the state and rewrites all tables
+in **one transaction** (full snapshot, crash-safe — a crash rolls back, never a half-written DB);
+`load_data` reads the tables back into the exact `state` JSON shape (or `"null"` when empty). The DB
+is just a serialization target — **derived values (balances, outstanding, received) are never stored**;
+they stay computed in `compute.js`. Key mapping calls: money is `REAL`; `transaction.from/to` are
+plain TEXT (account id **or** `ext:*` token — not an FK); `link` flattens to `link_kind/link_id/link_inv_id`;
+`investments` is a child table (FK, keeps the `redeemed` flag + signed-negative redemption rows);
+`theme` lives in a `meta` k/v table. **main.js is unchanged** by this swap.
+
+In a plain browser (`npm run dev` without Tauri) `readData`/`writeData` still fall back to
+`localStorage` (key `koin-data`), so the UI previews and the Vitest suite work without Rust.
+**Preserve this dual path.** SQLite engages only behind the Tauri `invoke` handlers.
+
+**Legacy import:** on first SQLite launch, if an old `koin-data.json` exists it's stashed verbatim
+into `meta.legacy_blob` (json renamed to `.bak`); `load_data` returns that blob so the JS boot
+migrations normalize it in memory exactly as before, and the first `save_data` writes normalized
+tables and clears the blob. So **all migration logic stays in `compute.js`** — Rust never duplicates it.
+The Rust `#[cfg(test)] mod tests` (run with `cargo test` in `src-tauri/`) guards round-trip fidelity
+and the legacy-import flow.
+
+### Settings & app lock
+A **Settings** view (gear nav) holds theme, the app-lock toggle, expense-category management, the
+DB file location, and About. **App lock** = macOS Touch ID / password on launch: the `authenticate`
+Tauri command uses `robius-authentication` (target-scoped to macOS in Cargo.toml — Linux/Windows get
+a no-op stub, so CI cross-builds are unaffected). `state.appLock` (bool) is a persisted scalar — it
+round-trips through the `meta` table (`app_lock`), so **any new persisted scalar must be added to the
+Rust `State` struct + `read_state`/`write_state`**, or it's silently dropped on save. Boot gates the
+UI behind a lock screen + `unlock()` when `inTauri && state.appLock`; enabling the toggle requires a
+successful auth first (so you can't lock yourself out). In a plain browser `authenticate` returns
+true (no native prompt), so the lock is effectively a desktop-only feature.
 
 ### Migrations
 `compute.js` holds all migrations, run at boot in order: `migrateIncome`, `migrateTrusts`,
@@ -132,6 +162,11 @@ Loans and income are paid in parts. **`repaid`/`received` are derived from linke
 transactions** (`loanOutstandingOne`, `incomeReceivedOne` in compute.js) — they are NOT stored.
 The "Repay"/"Payment" buttons append a transaction (and ask which account the money lands in);
 they never mutate a cumulative field. `addCapped` survives for the repay UI's amount clamp.
+
+A loan's **funding disbursement** (the `lend`/`borrow` txn that paid it out) is kept in sync by
+`syncLoanDisbursement` on **both create and edit** — so editing a loan's principal or funding
+account re-adjusts the linked account balance (upsert the txn, or remove it when "none" is chosen).
+Editing used to skip this, leaving balances stale.
 
 ## Hard-won decisions — do NOT undo these
 
@@ -167,8 +202,10 @@ they never mutate a cumulative field. `addCapped` survives for the repay UI's am
 npm install            # install deps (Node 20+, 22 recommended)
 npm run tauri dev      # run the desktop app (first run compiles Rust, slow)
 npm run dev            # browser-only preview (localStorage fallback, no Rust)
-npm test               # full Vitest suite (102 tests)
+npm test               # full Vitest suite (103 tests)
 npm run test:watch     # tests in watch mode
+cargo test --manifest-path src-tauri/Cargo.toml   # Rust SQLite round-trip + legacy-import tests
+npm run tauri -- icon src-tauri/app-icon.svg      # regenerate the icon set from the source SVG
 npm run coverage       # coverage for compute.js + validation.js (currently ~100% lines)
 npm run build          # build frontend to dist/
 npm run tauri build    # build native installer
@@ -193,4 +230,6 @@ npm run tauri build    # build native installer
   endpoint you delete and re-add. Full endpoint editing is deliberately out of scope.
 - No recurring transactions, no charts/history graphs, no multi-currency, no export.
 - Redemption uses average-cost basis (no FIFO/lot selection, no realized-gain reporting).
-- Icons in `src-tauri/icons` are solid-color placeholders.
+- App lock is launch-only (no idle/re-focus re-lock) and macOS-only (Touch ID / password).
+- The app icon is generated from [src-tauri/app-icon.svg](src-tauri/app-icon.svg) via `tauri icon`
+  (which also emits unused iOS/Android variants under `src-tauri/icons/`).

@@ -43,10 +43,31 @@ function applyTheme() {
   document.documentElement.setAttribute("data-theme", theme);
 }
 function toggleTheme() {
-  theme = theme === "dark" ? "light" : "dark";
+  setTheme(theme === "dark" ? "light" : "dark");
+}
+function setTheme(t) {
+  theme = t === "dark" ? "dark" : "light";
   state.theme = theme;
   applyTheme();
   persist();
+}
+
+/* ---------------- App lock (macOS Touch ID / password) ---------------- */
+let locked = false;
+// Returns true when the user authenticates (or when not in Tauri — no native auth in the browser).
+async function authenticate(reason) {
+  if (!inTauri) return true;
+  try {
+    return await invoke("authenticate", { reason: reason || "Unlock Koin" });
+  } catch {
+    return false;
+  }
+}
+async function unlock() {
+  if (await authenticate("Unlock Koin")) {
+    locked = false;
+    render();
+  }
 }
 
 /* ---------------- Money helpers ---------------- */
@@ -84,6 +105,12 @@ const netWorth = () => C.netWorth(state);
 const app = document.getElementById("app");
 
 function render() {
+  if (locked) {
+    app.innerHTML = lockScreen();
+    const btn = app.querySelector("[data-unlock]");
+    if (btn) btn.onclick = unlock;
+    return;
+  }
   app.innerHTML = `
     <aside class="sidebar">
       <div class="brand">
@@ -98,6 +125,7 @@ function render() {
         ${navBtn("loans", "↹", "Loans & debts")}
         ${navBtn("incomes", "✎", "Project income")}
         ${navBtn("trusts", "◈", "Unit trusts")}
+        ${navBtn("settings", "⚙", "Settings")}
       </nav>
       <button class="theme-toggle" data-theme-toggle>
         <span class="ic">${theme === "dark" ? "☀" : "☾"}</span>
@@ -105,7 +133,6 @@ function render() {
       </button>
       <div class="sidebar-foot">
         Auto-saved on every change.
-        <code id="loc"></code>
       </div>
     </aside>
     <main class="main">${views[view]()}</main>
@@ -377,6 +404,58 @@ const views = {
       }
     `;
   },
+
+  settings() {
+    const cats = state.categories || [];
+    return `
+      <div class="view-head"><div><h2>Settings</h2><p>Preferences, security, and your data.</p></div></div>
+
+      <div class="section">
+        <div class="section-head"><h3>Appearance</h3></div>
+        <div class="set-row">
+          <div><div class="set-label">Theme</div><div class="set-sub">Warm ledger paper, light or dark.</div></div>
+          <div class="seg">
+            <button class="seg-btn ${theme === "light" ? "active" : ""}" data-set-theme="light">☾ Light</button>
+            <button class="seg-btn ${theme === "dark" ? "active" : ""}" data-set-theme="dark">☀ Dark</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-head"><h3>Security</h3></div>
+        <div class="set-row">
+          <div><div class="set-label">Lock with Touch ID / password</div><div class="set-sub">Require macOS authentication each time Koin opens.${inTauri ? "" : " Takes effect in the desktop app."}</div></div>
+          <button class="seg-btn ${state.appLock ? "active" : ""}" data-toggle-lock>${state.appLock ? "On" : "Off"}</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-head"><h3>Expense categories</h3><button class="btn ghost sm" data-add="category">+ Add</button></div>
+        <div class="ledger" style="padding:16px">
+          ${
+            cats.length
+              ? `<div class="cat-chips">${cats
+                  .map((c) => `<span class="cat-chip">${esc(c)}<button data-del-cat="${esc(c)}" title="Remove">×</button></span>`)
+                  .join("")}</div>`
+              : `<div class="set-sub">No categories yet — add one, or they'll appear as you log expenses.</div>`
+          }
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-head"><h3>Data</h3></div>
+        <div class="set-row">
+          <div><div class="set-label">Database file</div><div class="set-sub">Local SQLite. Back it up by copying this file.</div></div>
+          <code id="loc" class="loc-code"></code>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-head"><h3>About</h3></div>
+        <div class="set-sub">Koin · v1.0.0 · local-first personal money tracker · LKR</div>
+      </div>
+    `;
+  },
 };
 
 function trustCard(t) {
@@ -469,6 +548,15 @@ function loanLedger(loans, compact) {
 
 const emptyState = (big, sub) =>
   `<div class="ledger"><div class="empty"><div class="big">${big}</div>${sub}</div></div>`;
+
+const lockScreen = () => `
+  <div class="lock">
+    <div class="lock-card">
+      <h1>Koin<span class="dot">.</span></h1>
+      <p>Locked. Authenticate to continue.</p>
+      <button class="btn" data-unlock>Unlock</button>
+    </div>
+  </div>`;
 
 /* ---- Ledger helpers (presentation) ---- */
 const byDateDesc = (a, b) => (b.date || "").localeCompare(a.date || "");
@@ -712,6 +800,11 @@ function wire() {
   bind("[data-add]", (b) => addFlows[b.dataset.add]());
   bind("[data-txn-filter]", (b) => { state.txnFilter = b.dataset.txnFilter; render(); });
 
+  // Settings
+  bind("[data-set-theme]", (b) => setTheme(b.dataset.setTheme));
+  bind("[data-toggle-lock]", () => toggleAppLock());
+  bind("[data-del-cat]", (b) => { state.categories = (state.categories || []).filter((c) => c !== b.dataset.delCat); persist(); });
+
   // Loans & debts
   bind("[data-repay]", (b) => repayLoan(state.loans.find((x) => x.id === b.dataset.repay)));
   bind("[data-edit-loan]", (b) => editLoan(state.loans.find((x) => x.id === b.dataset.editLoan)));
@@ -781,47 +874,70 @@ function addCategory(c) {
 const noneOption = (label) => ({ value: "", label });
 
 /* ---- Loans & debts ---- */
+// The single funding "disbursement" txn for a loan (the lend/borrow that paid it out), if any.
+function loanDisbursement(loanId, borrowed) {
+  const type = borrowed ? "borrow" : "lend";
+  const kind = borrowed ? "debt" : "loan";
+  return state.transactions.find((t) => t.type === type && t.link && t.link.kind === kind && t.link.id === loanId);
+}
+// Keep the funding account in sync: upsert the disbursement to `accountId` + current principal,
+// or remove it when "none" is chosen. Called on both create AND edit so balances stay correct.
+function syncLoanDisbursement(l, accountId) {
+  const borrowed = l.direction === "borrowed";
+  const existing = loanDisbursement(l.id, borrowed);
+  if (accountId) {
+    const fields = {
+      amount: num(l.principal),
+      from: borrowed ? "ext:debt" : accountId,
+      to: borrowed ? accountId : "ext:loan",
+      date: l.date || today(),
+    };
+    if (existing) Object.assign(existing, fields);
+    else pushTxn({ type: borrowed ? "borrow" : "lend", ...fields, link: { kind: borrowed ? "debt" : "loan", id: l.id } });
+  } else if (existing) {
+    state.transactions = state.transactions.filter((t) => t !== existing);
+  }
+}
+
 function editLoan(l, presetDirection) {
   const isNew = !l;
   const direction = isNew ? presetDirection || "lent" : l.direction || "lent";
   const borrowed = direction === "borrowed";
   const haveAccounts = state.accounts.some((a) => !a.archived);
+  const current = isNew ? null : loanDisbursement(l.id, borrowed);
   const fields = [
     { key: "person", label: borrowed ? "Lender's name" : "Friend's name", ph: borrowed ? "who you owe" : "e.g. Kasun" },
     { key: "principal", label: borrowed ? "Amount borrowed" : "Amount lent", type: "number", ph: "0.00" },
-    ...(isNew && haveAccounts
-      ? [{ key: "account", label: borrowed ? "Receive into account (optional)" : "Fund from account (optional)", type: "select", options: [noneOption("— none (don't move money) —"), ...accountOptions()] }]
+    ...(haveAccounts
+      ? [{ key: "account", label: borrowed ? "Received into account" : "Funded from account", type: "select", options: [noneOption("— none (don't move money) —"), ...accountOptions()] }]
       : []),
     { key: "date", label: borrowed ? "Date borrowed" : "Date lent", type: "date" },
     { key: "due", label: "Due date (optional)", type: "date" },
     { key: "note", label: "Note (optional)", ph: "what it was for" },
   ];
   const save = (v) => {
+    let loan;
     if (isNew) {
-      const id = uid();
-      state.loans.push({ id, person: v.person, principal: num(v.principal), direction, date: v.date, due: v.due, note: v.note });
-      if (v.account) {
-        pushTxn({
-          date: v.date || today(),
-          type: borrowed ? "borrow" : "lend",
-          amount: num(v.principal),
-          from: borrowed ? "ext:debt" : v.account,
-          to: borrowed ? v.account : "ext:loan",
-          link: { kind: borrowed ? "debt" : "loan", id },
-        });
-      }
+      loan = { id: uid(), person: v.person, principal: num(v.principal), direction, date: v.date, due: v.due, note: v.note };
+      state.loans.push(loan);
     } else {
       Object.assign(l, { person: v.person, principal: num(v.principal), date: v.date, due: v.due, note: v.note });
+      loan = l;
     }
+    if (haveAccounts) syncLoanDisbursement(loan, v.account);
     persist();
   };
+  const prefill = isNew
+    ? { date: today(), account: "" }
+    : { person: l.person, principal: l.principal, date: l.date, due: l.due, note: l.note,
+        account: current ? (borrowed ? current.to : current.from) : "" };
   const open = () =>
     modal(
       isNew ? (borrowed ? "Borrow money" : "Lend money") : borrowed ? "Edit debt" : "Edit loan",
-      fields, save, l || { date: today(), account: "" }, specs.loan
+      fields, save, prefill, specs.loan
     );
   if (isNew) open();
-  else confirmThen(borrowed ? "Edit this debt?" : "Edit this loan?", "You can change its details.", open);
+  else confirmThen(borrowed ? "Edit this debt?" : "Edit this loan?", "You can change its details, including which account funded it.", open);
 }
 
 function repayLoan(l) {
@@ -1070,6 +1186,23 @@ function updateTrustNav(t) {
   ], (v) => { t.currentNav = num(v.currentNav); persist(); }, { currentNav: t.currentNav }, specs.navUpdate);
 }
 
+function addCategoryFlow() {
+  modal("Add category", [
+    { key: "name", label: "Category name", ph: "e.g. Groceries" },
+  ], (v) => { addCategory(v.name); persist(); }, {}, specs.category);
+}
+
+// Enabling requires a successful auth first, so the user can't lock themselves out.
+async function toggleAppLock() {
+  if (state.appLock) {
+    state.appLock = false;
+    persist();
+  } else if (await authenticate("Enable Koin lock")) {
+    state.appLock = true;
+    persist();
+  }
+}
+
 const addFlows = {
   lend: () => editLoan(null, "lent"),
   borrow: () => editLoan(null, "borrowed"),
@@ -1079,6 +1212,7 @@ const addFlows = {
   expense: addExpense,
   transfer: addTransfer,
   txnIncome: addIncomeTxn,
+  category: addCategoryFlow,
 };
 
 /* ---------------- Utils ---------------- */
@@ -1105,5 +1239,12 @@ async function persist() { await writeData(state); render(); }
   state.categories = C.migrateCategories(state.categories);
   theme = state.theme === "dark" ? "dark" : "light";
   applyTheme();
-  render();
+  // App lock: in the desktop app, gate the UI behind Touch ID / password on launch.
+  if (inTauri && state.appLock) {
+    locked = true;
+    render();
+    unlock();
+  } else {
+    render();
+  }
 })();

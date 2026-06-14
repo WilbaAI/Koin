@@ -185,4 +185,7 @@ export const specs = {
     date: optionalDate("Date"),
     note: maxLen("Note", 200),
   },
+  category: {
+    name: all(required("Category"), maxLen("Category", 40)),
+  },
 };
