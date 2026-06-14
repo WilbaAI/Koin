@@ -54,6 +54,7 @@ src-tauri/
   Cargo.toml         # Rust deps (tauri, plugin-fs, plugin-dialog) pinned to "2"; rusqlite (bundled)
   capabilities/default.json  # permissions
 .github/workflows/ci.yml     # CI: test+build frontend, then Tauri build on 3 OSes
+.github/workflows/release.yml # On a v* tag: build installers on 3 OSes + publish a GitHub Release
 ```
 
 ## Architecture & conventions
@@ -208,7 +209,8 @@ cargo test --manifest-path src-tauri/Cargo.toml   # Rust SQLite round-trip + leg
 npm run tauri -- icon src-tauri/app-icon.svg      # regenerate the icon set from the source SVG
 npm run coverage       # coverage for compute.js + validation.js (currently ~100% lines)
 npm run build          # build frontend to dist/
-npm run tauri build    # build native installer
+npm run tauri build    # build native installer (current OS only)
+git tag v1.2.3 && git push origin v1.2.3   # cut a public GitHub Release (installers for all 3 OSes)
 ```
 
 ## When making changes

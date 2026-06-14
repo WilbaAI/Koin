@@ -1,0 +1,79 @@
+name: Release
+
+# Cut a release by pushing a version tag, e.g.:  git tag v1.0.1 && git push origin v1.0.1
+# This builds installers on all three OSes and publishes them to a public GitHub Release
+# (anyone can download the assets from the release page — no GitHub account needed).
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # needed to create the release + upload assets
+
+jobs:
+  release:
+    name: Release (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest # universal .dmg (Apple Silicon + Intel)
+            args: "--target universal-apple-darwin"
+          - platform: ubuntu-latest # .AppImage + .deb
+            args: ""
+          - platform: windows-latest # .msi + .exe (NSIS)
+            args: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Koin ${{ github.ref_name }}"
+          releaseBody: |
+            Desktop builds of **Koin**. Download the file for your OS:
+            - **Windows:** the `.msi` (or `.exe`) installer
+            - **macOS:** the `.dmg` (universal — Apple Silicon & Intel)
+            - **Linux:** the `.AppImage` or `.deb`
+
+            These builds are **unsigned**, so the OS may warn about an unknown developer:
+            - Windows SmartScreen → **More info → Run anyway**
+            - macOS Gatekeeper → right-click the app → **Open** (first launch only)
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
